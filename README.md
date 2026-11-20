@@ -27,7 +27,7 @@ Read this first.
    - A username and password (the examples below use `pi`)
    - Your Wi-Fi name and password
    - Enable SSH, with password login
-4. Write the card, put it in the Pi and power it on. Wait two minutes.
+4. Write the sd card (using the usb looking dongle, you push the micro sd card in the bottom open area of the usb stick before plugging it into your laptop), put it in the Pi and power it on. Wait two minutes.
 
 ## 2. Connect to the Pi
 
