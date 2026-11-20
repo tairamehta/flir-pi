@@ -16,7 +16,7 @@ Read this first.
 - Raspberry Pi 3, 4, 5 or Zero 2 W, with a power supply and microSD card
 - FLIR ONE or FLIR ONE Pro, USB-C version (not Lightning)
 - A USB-C female to USB-A male adapter for each camera
-- A computer on the same Wi-Fi as the Pi
+- A computer on the same Wi-Fi as the Pi, IDEALLY NOT EDUROAM- use your hotspot!!
 
 ## 1. Prepare the SD card
 
