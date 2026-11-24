@@ -78,11 +78,34 @@ On any computer with Python 3:
 
 Then open `http://localhost:8000/`.
 
+## Hot spots and people
+
+The Pi does more than show video. A few times a second it:
+
+1. Works out the room temperature (the middle value of the whole picture).
+2. Finds every patch that is at least 3 degrees warmer than the room.
+3. Remembers what the scene normally looks like, so fixed warm things (lights, vents, screens) are learned as background.
+4. Labels each patch:
+   - `person_like`: new to the scene, 2 to 18 degrees warmer than the room, and at least 1% of the picture.
+   - `hot_object`: 25 degrees or more above the room.
+   - `warm_area`: everything else, including fixed warm things.
+
+Patches are outlined on the thermal picture: green for person-like, white for hot objects, blue for warm areas.
+
+Limits to know about:
+
+- `person_like` is a simple rule, not a trained model. A pet or a hot drink carried into view can trigger it.
+- Someone who stays completely still for about two minutes fades into the background until they move.
+- Whatever is in view when the Pi starts counts as background.
+
 ## Getting the data
 
 | Address | What you get |
 |---|---|
 | `/api/cameras` | List of cameras with temperatures |
+| `/api/analysis` | Hot spots and people for every camera |
+| `/cam/SERIAL/analysis` | Hot spots, people count and an 8 by 6 grid of zone temperatures |
+| `/cam/SERIAL/celsius.json` | Temperature of every pixel, as rows of numbers |
 | `/cam/SERIAL/thermal.jpg` | Thermal picture |
 | `/cam/SERIAL/visible.jpg` | Normal camera picture |
 | `/cam/SERIAL/thermal.mjpg` | Live thermal video |

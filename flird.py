@@ -11,7 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import flirone
 
@@ -29,12 +29,96 @@ def _palette() -> np.ndarray:
 PALETTE = _palette()
 
 
-def render(thermal: np.ndarray, width: int = 640) -> bytes:
+OFFSET_C = 0.0
+DELTA_C = 3.0
+MIN_AREA_PX = 20
+PERSON_ABOVE_ROOM_C = (2.0, 18.0)
+PERSON_MIN_FRACTION = 0.01
+HOT_OBJECT_ABOVE_ROOM_C = 25.0
+NEW_C = 1.5
+BACKGROUND_SECONDS = 120.0
+BOX_COLOURS = {"person_like": (0, 255, 120), "hot_object": (255, 255, 255), "warm_area": (90, 200, 255)}
+
+
+def to_celsius(thermal: np.ndarray) -> np.ndarray:
+    return flirone.counts_to_celsius(thermal) + OFFSET_C
+
+
+def label_blobs(mask: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    h, w = mask.shape
+    grid = mask.tolist()
+    blobs = []
+    for sy in range(h):
+        row = grid[sy]
+        for sx in range(w):
+            if not row[sx]:
+                continue
+            row[sx] = False
+            stack = [(sy, sx)]
+            ys, xs = [], []
+            while stack:
+                y, x = stack.pop()
+                ys.append(y)
+                xs.append(x)
+                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                    if 0 <= ny < h and 0 <= nx < w and grid[ny][nx]:
+                        grid[ny][nx] = False
+                        stack.append((ny, nx))
+            blobs.append((np.array(ys), np.array(xs)))
+    return blobs
+
+
+def analyze(celsius: np.ndarray, background: np.ndarray | None = None) -> dict:
+    h, w = celsius.shape
+    ambient = float(np.nanmedian(celsius))
+    hotspots = []
+    for ys, xs in label_blobs(np.nan_to_num(celsius, nan=ambient) > ambient + DELTA_C):
+        if len(ys) < MIN_AREA_PX:
+            continue
+        values = celsius[ys, xs]
+        mean, peak = float(values.mean()), float(values.max())
+        fraction = len(ys) / (h * w)
+        change = float((values - background[ys, xs]).mean()) if background is not None else 0.0
+        is_new = background is None or change >= NEW_C
+        if peak - ambient >= HOT_OBJECT_ABOVE_ROOM_C:
+            kind = "hot_object"
+        elif is_new and PERSON_ABOVE_ROOM_C[0] <= mean - ambient <= PERSON_ABOVE_ROOM_C[1] and fraction >= PERSON_MIN_FRACTION:
+            kind = "person_like"
+        else:
+            kind = "warm_area"
+        x0, x1, y0, y1 = int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
+        hotspots.append({
+            "kind": kind,
+            "x": x0, "y": y0, "width": x1 - x0 + 1, "height": y1 - y0 + 1,
+            "center": [round(float(xs.mean()) / w, 3), round(float(ys.mean()) / h, 3)],
+            "area_px": len(ys),
+            "area_fraction": round(fraction, 4),
+            "mean_c": round(mean, 1),
+            "max_c": round(peak, 1),
+            "above_ambient_c": round(mean - ambient, 1),
+            "above_background_c": round(change, 1),
+            "new": bool(background is not None and change >= NEW_C),
+        })
+    hotspots.sort(key=lambda b: -b["area_px"])
+    zones = celsius.reshape(6, h // 6, 8, w // 8).mean(axis=(1, 3))
+    return {
+        "ambient_c": round(ambient, 1),
+        "person_like": sum(b["kind"] == "person_like" for b in hotspots),
+        "hotspots": hotspots,
+        "zones_c": [[round(float(v), 1) for v in row] for row in zones],
+    }
+
+
+def render(thermal: np.ndarray, hotspots: list[dict] = (), width: int = 640) -> bytes:
     lo, hi = np.percentile(thermal, (1, 99))
     norm = np.clip((thermal.astype(np.float32) - lo) / max(hi - lo, 1), 0, 1)
     img = Image.fromarray(PALETTE[(norm * 255).astype(np.uint8)], "RGB")
     scale = width // thermal.shape[1]
     img = img.resize((thermal.shape[1] * scale, thermal.shape[0] * scale), Image.BICUBIC)
+    draw = ImageDraw.Draw(img)
+    for b in hotspots:
+        box = [b["x"] * scale, b["y"] * scale, (b["x"] + b["width"]) * scale - 1, (b["y"] + b["height"]) * scale - 1]
+        draw.rectangle(box, outline=BOX_COLOURS[b["kind"]], width=2)
     out = io.BytesIO()
     img.save(out, "JPEG", quality=85)
     return out.getvalue()
@@ -52,6 +136,10 @@ class CameraWorker(threading.Thread):
         self.thermal_jpg = b""
         self.visible_jpg = b""
         self.stats: dict = {}
+        self.analysis: dict = {}
+        self.shutter_check: dict = {}
+        self.background: np.ndarray | None = None
+        self.background_time = 0.0
         self.fps = 0.0
         self.alive = True
 
@@ -67,8 +155,14 @@ class CameraWorker(threading.Thread):
                     self.fps = 0.9 * self.fps + 0.1 / max(now - last, 1e-3) if self.fps else 1 / max(now - last, 1e-3)
                 last = now
                 if frame.ffc:
+                    shutter_k = frame.status.get("shutterTemperature")
+                    if shutter_k:
+                        self.shutter_check = {
+                            "measured_c": round(float(np.nanmedian(to_celsius(frame.thermal))), 1),
+                            "shutter_c": round(shutter_k - 273.15, 1),
+                        }
                     continue
-                celsius = flirone.counts_to_celsius(frame.thermal)
+                celsius = to_celsius(frame.thermal)
                 h, w = frame.thermal.shape
                 stats = {
                     "min_c": round(float(np.nanmin(celsius)), 1),
@@ -77,9 +171,23 @@ class CameraWorker(threading.Thread):
                     "resolution": [w, h],
                     "timestamp": frame.timestamp,
                 }
-                jpg = render(frame.thermal)
+                if self.seq % 3 == 0 or not self.analysis:
+                    if self.background is None or self.background.shape != celsius.shape:
+                        self.background = celsius.copy()
+                    else:
+                        rate = min((now - self.background_time) / BACKGROUND_SECONDS, 1.0)
+                        self.background += rate * (celsius - self.background)
+                    self.background_time = now
+                    analysis = {"serial": self.serial, "timestamp": frame.timestamp, **analyze(celsius, self.background)}
+                    if self.shutter_check:
+                        analysis["shutter_check"] = self.shutter_check
+                else:
+                    analysis = self.analysis
+                stats["hotspots"] = len(analysis["hotspots"])
+                stats["person_like"] = analysis["person_like"]
+                jpg = render(frame.thermal, analysis["hotspots"])
                 with self.cond:
-                    self.frame, self.stats, self.thermal_jpg = frame, stats, jpg
+                    self.frame, self.stats, self.thermal_jpg, self.analysis = frame, stats, jpg, analysis
                     if frame.jpeg:
                         self.visible_jpg = frame.jpeg
                     self.seq += 1
@@ -155,6 +263,10 @@ class Manager:
         with self.lock:
             return [w.info() for w in sorted(self.workers.values(), key=lambda w: w.serial)]
 
+    def analyses(self) -> list[dict]:
+        with self.lock:
+            return [w.analysis for w in sorted(self.workers.values(), key=lambda w: w.serial) if w.analysis]
+
     def get(self, serial: str) -> CameraWorker | None:
         with self.lock:
             return self.workers.get(serial)
@@ -176,7 +288,7 @@ d.innerHTML=`<div class=views><img src="/cam/${s}/thermal.mjpg" alt="thermal"><i
 async function tick(){try{const cams=await (await fetch('/api/cameras')).json();const seen=new Set();
 for(const c of cams){seen.add(c.serial);const d=cards[c.serial]||(cards[c.serial]=card(c.serial));
 d.querySelector('[data-k=temps]').textContent=c.min_c===undefined?'starting…':`min ${c.min_c}° · centre ${c.center_c}° · max ${c.max_c}°C`;
-d.querySelector('[data-k=info]').textContent=c.resolution?`${c.resolution[0]}×${c.resolution[1]} · ${c.fps} fps`:''}
+d.querySelector('[data-k=info]').textContent=c.resolution?`${c.hotspots} hot spots · ${c.person_like} person-like · ${c.resolution[0]}×${c.resolution[1]} · ${c.fps} fps`:''}
 for(const s in cards)if(!seen.has(s)){cards[s].remove();delete cards[s]}
 document.getElementById('count').textContent=cams.length?`(${cams.length})`:'';document.getElementById('empty').hidden=cams.length>0}catch(e){}}
 tick();setInterval(tick,1000);
@@ -225,6 +337,8 @@ def make_handler(manager: Manager):
                     return self._send(PAGE.encode(), "text/html; charset=utf-8")
                 if path == "/api/cameras":
                     return self._send(json.dumps(manager.list()).encode(), "application/json")
+                if path == "/api/analysis":
+                    return self._send(json.dumps(manager.analyses()).encode(), "application/json")
                 parts = path.strip("/").split("/")
                 worker = manager.get(parts[1]) if len(parts) == 3 and parts[0] == "cam" else None
                 if worker is None:
@@ -241,7 +355,12 @@ def make_handler(manager: Manager):
                 if what == "raw.npy":
                     return self._npy(worker.frame.thermal)
                 if what == "celsius.npy":
-                    return self._npy(flirone.counts_to_celsius(worker.frame.thermal).astype(np.float32))
+                    return self._npy(to_celsius(worker.frame.thermal).astype(np.float32))
+                if what == "celsius.json":
+                    rows = np.round(to_celsius(worker.frame.thermal), 1).tolist()
+                    return self._send(json.dumps(rows).encode(), "application/json")
+                if what == "analysis":
+                    return self._send(json.dumps(worker.analysis).encode(), "application/json")
                 self._send(b"not found\n", "text/plain", 404)
             except (BrokenPipeError, ConnectionResetError):
                 self.close_connection = True
@@ -250,12 +369,16 @@ def make_handler(manager: Manager):
 
 
 def main() -> None:
+    global OFFSET_C, DELTA_C
     ap = argparse.ArgumentParser(description="Multi-camera FLIR ONE server")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--fake", type=int, default=0, metavar="N", help="serve N simulated cameras instead of USB ones")
     ap.add_argument("--csv", metavar="FILE", help="append min/centre/max per camera to FILE every 2 s")
+    ap.add_argument("--offset", type=float, default=0.0, metavar="C", help="degrees C added to every temperature")
+    ap.add_argument("--delta", type=float, default=DELTA_C, metavar="C", help="degrees C above the room for a hot spot")
     args = ap.parse_args()
+    OFFSET_C, DELTA_C = args.offset, args.delta
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     manager = Manager(args.fake, args.csv)
     threading.Thread(target=manager.run, daemon=True).start()
