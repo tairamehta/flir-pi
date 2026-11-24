@@ -4,12 +4,10 @@ Run one or more FLIR ONE (USB-C) thermal cameras from a Raspberry Pi and watch t
 
 ## Status
 
-Read this first.
-
-- The web page and server work. They were tested with simulated cameras.
-- Reading from a real camera has **not** been tested on a Pi yet. That is the next job.
-- This cannot be tested on a Mac. macOS blocks the camera's video stream. Linux (the Pi) does not.
-- Temperature readings are rough until checked against something of known temperature.
+- Tested on a Raspberry Pi 4 with one FLIR ONE Pro (USB-C). Live thermal and normal video both work, at about 10 frames per second.
+- Running several cameras at once has only been tested with simulated cameras.
+- Temperature readings are rough. They read about 10 degrees too high in testing, so check them against something of known temperature before relying on them.
+- This does not work on a Mac. macOS blocks the camera's video stream. Linux (the Pi) does not.
 
 ## What you need
 

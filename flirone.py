@@ -58,9 +58,12 @@ class Frame:
 
 def decode_thermal(payload: bytes) -> np.ndarray:
     words = np.frombuffer(payload[: len(payload) // 2 * 2], dtype="<u2")
-    packets = len(words) // PACKET_WORDS
-    shape = {240: (120, 160), 60: (60, 80)}.get(packets)
-    if shape is None:
+    available = len(words) // PACKET_WORDS
+    if available >= 240:
+        packets, shape = 240, (120, 160)
+    elif available >= 60:
+        packets, shape = 60, (60, 80)
+    else:
         raise ValueError(f"unrecognised thermal payload of {len(payload)} bytes")
     pixels = words[: packets * PACKET_WORDS].reshape(packets, PACKET_WORDS)[:, 2:]
     return pixels.reshape(shape).copy()
@@ -103,9 +106,11 @@ class FlirOne:
         self.serial = device.serial_number
         self._buf = bytearray()
         self._claimed = False
+        self._errors = 0
 
     def start(self) -> None:
         dev = self.dev
+        self._errors = 0
         try:
             active = dev.get_active_configuration().bConfigurationValue
         except usb.core.USBError:
@@ -148,8 +153,16 @@ class FlirOne:
 
     def _bulk(self, ep: int, timeout: int) -> bytes:
         try:
-            return bytes(self.dev.read(ep, MAX_FRAME, timeout=timeout))
+            data = bytes(self.dev.read(ep, MAX_FRAME, timeout=timeout))
+            self._errors = 0
+            return data
         except usb.core.USBTimeoutError:
+            return b""
+        except usb.core.USBError:
+            self._errors += 1
+            if self._errors > 20:
+                raise
+            time.sleep(0.05)
             return b""
 
     def read_frame(self, timeout: float = 5.0) -> Frame:
