@@ -80,23 +80,22 @@ Then open `http://localhost:8000/`.
 
 ## Hot spots and people
 
-The Pi does more than show video. A few times a second it:
+The Pi does more than show video. It returns results as data.
+
+**People.** A pretrained person detector (YOLOX) looks at the thermal picture about every two seconds and reports each person it finds, with a box and a confidence score. It was trained on ordinary photos, not thermal ones, so treat it as a good first pass. In testing it found people in 12 out of 12 public thermal photos shrunk to this camera's size. People are outlined with a thick green box.
+
+**Hot spots.** A few times a second the Pi also:
 
 1. Works out the room temperature (the middle value of the whole picture).
 2. Finds every patch that is at least 3 degrees warmer than the room.
 3. Remembers what the scene normally looks like, so fixed warm things (lights, vents, screens) are learned as background.
-4. Labels each patch:
-   - `person_like`: new to the scene, 2 to 18 degrees warmer than the room, and at least 1% of the picture.
-   - `hot_object`: 25 degrees or more above the room.
-   - `warm_area`: everything else, including fixed warm things.
-
-Patches are outlined on the thermal picture: green for person-like, white for hot objects, blue for warm areas.
+4. Labels each patch as `hot_object` (25 degrees or more above the room), `person_like` (new to the scene and 2 to 18 degrees above the room), or `warm_area` (everything else).
 
 Limits to know about:
 
-- `person_like` is a simple rule, not a trained model. A pet or a hot drink carried into view can trigger it.
-- Someone who stays completely still for about two minutes fades into the background until they move.
-- Whatever is in view when the Pi starts counts as background.
+- The person detector has not been tuned on this camera. It can miss people who are far away, partly hidden or lying down.
+- With several cameras, each one is checked in turn, so updates get slower.
+- If the detector model is missing, the Pi falls back to the `person_like` rule. The `people_source` field says which one is in use: `model` or `rule`.
 
 ## Getting the data
 
@@ -104,7 +103,7 @@ Limits to know about:
 |---|---|
 | `/api/cameras` | List of cameras with temperatures |
 | `/api/analysis` | Hot spots and people for every camera |
-| `/cam/SERIAL/analysis` | Hot spots, people count and an 8 by 6 grid of zone temperatures |
+| `/cam/SERIAL/analysis` | People, hot spots and an 8 by 6 grid of zone temperatures |
 | `/cam/SERIAL/celsius.json` | Temperature of every pixel, as rows of numbers |
 | `/cam/SERIAL/thermal.jpg` | Thermal picture |
 | `/cam/SERIAL/visible.jpg` | Normal camera picture |
@@ -120,6 +119,7 @@ To log temperatures to a file, add `--csv temps.csv` to the `ExecStart` line in 
 
 - `flirone.py` talks to the camera over USB.
 - `flird.py` is the web server and dashboard.
+- `detector.py` finds people in the thermal picture.
 - `install-pi.sh` sets everything up on the Pi.
 
 ## Credit and licence
