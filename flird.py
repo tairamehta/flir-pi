@@ -315,23 +315,50 @@ class Manager:
 PAGE = """<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>FLIR ONE cameras</title><style>
 body{margin:0;padding:16px;background:#111;color:#eee;font:15px system-ui,sans-serif}
-h1{font-size:18px;margin:0 0 12px}#grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(900px,100%),1fr))}
-.card{background:#1c1c1c;border-radius:8px;overflow:hidden}.card img{width:100%;display:block;image-rendering:auto;background:#000}
-.views{display:grid;grid-template-columns:1fr 1fr;gap:2px}.meta{padding:10px 12px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
-.flag{padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px}.flag.person{background:#0c6;color:#031}.flag.warm{background:#fa3;color:#320}.flag:empty{display:none}
-.meta b{font-size:16px}.dim{color:#999;font-size:13px}.t{font-variant-numeric:tabular-nums}#empty{color:#999}
+h1{font-size:18px;margin:0 0 12px}h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#999;margin:0 0 6px;font-weight:600}
+#grid{display:grid;gap:16px}.card{background:#1c1c1c;border-radius:8px;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr) 340px}
+.views{display:grid;grid-template-columns:1fr 1fr;gap:2px;align-content:start}.views img{width:100%;display:block;background:#000;aspect-ratio:4/3;object-fit:cover}
+.side{padding:14px 16px;display:grid;gap:16px;align-content:start;border-left:1px solid #2a2a2a;min-width:0}
+.head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.head b{font-size:17px}
+.flag{padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px;background:#333;color:#bbb}.flag.person{background:#0c6;color:#031}.flag.warm{background:#fa3;color:#320}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px}.kv span:nth-child(odd){color:#999}.t,.kv,.zones,table{font-variant-numeric:tabular-nums}
+.zones{display:grid;grid-template-columns:repeat(8,1fr);gap:2px}.zones div{aspect-ratio:1;display:grid;place-items:center;font-size:11px;border-radius:2px}
+table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:2px 8px 2px 0;font-weight:400}th{color:#999}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.dim{color:#999;font-size:13px}
+.links{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px}a{color:#6cf;text-decoration:none}a:hover{text-decoration:underline}
+#empty{color:#999}@media(max-width:900px){.card{grid-template-columns:1fr}.side{border-left:0;border-top:1px solid #2a2a2a}}
 </style></head><body><h1>FLIR ONE cameras <span class=dim id=count></span></h1><div id=grid></div><p id=empty hidden>No cameras connected.</p>
 <script>
 const grid=document.getElementById('grid'),cards={};
+const KIND={person_like:['#00ff78','Person-like'],hot_object:['#ffffff','Hot object'],warm_area:['#5ac8ff','Warm area']};
+const IRON=[[0,[0,0,0]],[.2,[60,0,110]],[.45,[190,20,90]],[.7,[250,130,10]],[.9,[255,225,70]],[1,[255,255,255]]];
+function iron(t){t=Math.max(0,Math.min(1,t));for(let i=1;i<IRON.length;i++){if(t<=IRON[i][0]){const a=IRON[i-1],b=IRON[i],k=(t-a[0])/(b[0]-a[0]);return a[1].map((v,j)=>Math.round(v+(b[1][j]-v)*k))}}return[255,255,255]}
+function where(c){return(c[1]<.34?'top':c[1]>.66?'bottom':'middle')+' '+(c[0]<.34?'left':c[0]>.66?'right':'centre')}
+function live(img,url,gap){const next=()=>{if(!img.isConnected)return;img.src=url+'?t='+Date.now()};img.onload=()=>setTimeout(next,gap);img.onerror=()=>setTimeout(next,1000);next()}
 function card(s){const d=document.createElement('div');d.className='card';
 d.innerHTML=`<div class=views><img data-k=thermal alt="thermal"><img data-k=visible alt="visible"></div>
-<div class=meta><b>${s}</b><span class=flag data-k=flag></span><span class="t" data-k=temps></span><span class="dim t" data-k=info></span></div>`;grid.append(d);live(d.querySelector('[data-k=thermal]'),`/cam/${s}/thermal.jpg`,120);live(d.querySelector('[data-k=visible]'),`/cam/${s}/visible.jpg`,400);return d}
-function live(img,url,gap){const next=()=>{if(!img.isConnected)return;img.src=url+'?t='+Date.now()};img.onload=()=>setTimeout(next,gap);img.onerror=()=>setTimeout(next,1000);next()}
-async function tick(){try{const cams=await (await fetch('/api/cameras')).json();const seen=new Set();
-for(const c of cams){seen.add(c.serial);const d=cards[c.serial]||(cards[c.serial]=card(c.serial));
-const f=d.querySelector('[data-k=flag]');f.className='flag'+(c.people>0&&c.people_source=='model'?' person':c.person_like>0?' warm':'');f.textContent=c.people>0&&c.people_source=='model'?`PERSON DETECTED (${c.people})`:c.person_like>0?'WARM BODY IN VIEW':'';
-d.querySelector('[data-k=temps]').textContent=c.min_c===undefined?'starting…':`min ${c.min_c}° · centre ${c.center_c}° · max ${c.max_c}°C`;
-d.querySelector('[data-k=info]').textContent=c.resolution?`${c.people} people (${c.people_source}) · ${c.hotspots} hot spots · ${c.resolution[0]}×${c.resolution[1]} · ${c.fps} fps`:''}
+<aside class=side><div class=head><b>${s}</b><span class=flag data-k=flag></span></div>
+<section><h2>Temperature</h2><div class=kv data-k=temps></div></section>
+<section><h2>Heat map by zone (°C)</h2><div class=zones data-k=zones></div></section>
+<section><h2>Hot spots</h2><div data-k=spots></div></section>
+<section><h2>People</h2><div data-k=people></div></section>
+<section><h2>Data</h2><div class=links><a href="/cam/${s}/analysis">Analysis (JSON)</a><a href="/cam/${s}/celsius.json">Full heat map (JSON)</a><a href="/cam/${s}/celsius.npy">Full heat map (NumPy)</a><a href="/cam/${s}/raw.npy">Raw sensor values</a><a href="/cam/${s}/thermal.jpg">Thermal picture</a><a href="/cam/${s}/visible.jpg">Normal picture</a></div></section>
+<div class="dim t" data-k=info></div></aside>`;
+grid.append(d);live(d.querySelector('[data-k=thermal]'),`/cam/${s}/thermal.jpg`,120);live(d.querySelector('[data-k=visible]'),`/cam/${s}/visible.jpg`,400);return d}
+function fill(d,c,a){const q=k=>d.querySelector(`[data-k=${k}]`);
+const f=q('flag'),person=c.people>0&&c.people_source=='model';
+f.className='flag'+(person?' person':c.person_like>0?' warm':'');f.textContent=person?`PERSON DETECTED (${c.people})`:c.person_like>0?'WARM BODY IN VIEW':'Nothing detected';
+if(c.min_c===undefined){q('temps').textContent='starting…';return}
+q('temps').innerHTML=`<span>Room</span><span>${a?a.ambient_c:'–'}°</span><span>Coolest</span><span>${c.min_c}°</span><span>Centre</span><span>${c.center_c}°</span><span>Hottest</span><span>${c.max_c}°</span><span>Accuracy</span><span>${c.calibration=='shutter'?'corrected':'reads high until first self-calibration'}</span>`;
+q('info').textContent=`${c.resolution[0]}×${c.resolution[1]} · ${c.fps} frames/s`;
+if(!a)return;
+const z=a.zones_c.flat(),lo=Math.min(...z),hi=Math.max(...z),span=Math.max(hi-lo,2),base=(lo+hi)/2-span/2;
+q('zones').innerHTML=z.map(v=>{const t=(v-base)/span,rgb=iron(.15+.75*t);return`<div style="background:rgb(${rgb});color:${t>.6?'#000':'#fff'}">${v.toFixed(1)}</div>`}).join('');
+q('spots').innerHTML=a.hotspots.length?`<table><tr><th>Type</th><th>Where</th><th>Size</th><th>Avg</th><th>Peak</th></tr>${a.hotspots.map(b=>`<tr><td><span class=dot style="background:${KIND[b.kind][0]}"></span>${KIND[b.kind][1]}${b.new?'':' (fixed)'}</td><td>${where(b.center)}</td><td>${(b.area_fraction*100).toFixed(1)}%</td><td>${b.mean_c}°</td><td>${b.max_c}°</td></tr>`).join('')}</table>`:'<span class=dim>None</span>';
+q('people').innerHTML=a.people_source!='model'?'<span class=dim>Detector model not installed. Using the warm-body rule.</span>':a.people.length?`<table><tr><th>#</th><th>Where</th><th>Confidence</th></tr>${a.people.map((p,i)=>`<tr><td>${i+1}</td><td>${where([(p.x+p.width/2)/c.resolution[0],(p.y+p.height/2)/c.resolution[1]])}</td><td>${Math.round(p.score*100)}%</td></tr>`).join('')}</table>`:'<span class=dim>None</span>'}
+async function tick(){try{const[cams,an]=await Promise.all([fetch('/api/cameras').then(r=>r.json()),fetch('/api/analysis').then(r=>r.json())]);
+const by={};for(const a of an)by[a.serial]=a;const seen=new Set();
+for(const c of cams){seen.add(c.serial);fill(cards[c.serial]||(cards[c.serial]=card(c.serial)),c,by[c.serial])}
 for(const s in cards)if(!seen.has(s)){cards[s].remove();delete cards[s]}
 document.getElementById('count').textContent=cams.length?`(${cams.length})`:'';document.getElementById('empty').hidden=cams.length>0}catch(e){}}
 tick();setInterval(tick,1000);
