@@ -315,7 +315,7 @@ class Manager:
 PAGE = """<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>FLIR ONE cameras</title><style>
 body{margin:0;padding:16px;background:#111;color:#eee;font:15px system-ui,sans-serif}
-h1{font-size:18px;margin:0 0 12px}#grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+h1{font-size:18px;margin:0 0 12px}#grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(900px,100%),1fr))}
 .card{background:#1c1c1c;border-radius:8px;overflow:hidden}.card img{width:100%;display:block;image-rendering:auto;background:#000}
 .views{display:grid;grid-template-columns:1fr 1fr;gap:2px}.meta{padding:10px 12px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
 .flag{padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px}.flag.person{background:#0c6;color:#031}.flag.warm{background:#fa3;color:#320}.flag:empty{display:none}
