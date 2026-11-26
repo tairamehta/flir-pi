@@ -41,8 +41,8 @@ BACKGROUND_SECONDS = 120.0
 BOX_COLOURS = {"person_like": (0, 255, 120), "hot_object": (255, 255, 255), "warm_area": (90, 200, 255)}
 
 
-def to_celsius(thermal: np.ndarray) -> np.ndarray:
-    return flirone.counts_to_celsius(thermal) + OFFSET_C
+def to_celsius(thermal: np.ndarray, offset: float = 0.0) -> np.ndarray:
+    return flirone.counts_to_celsius(thermal) + OFFSET_C + offset
 
 
 def label_blobs(mask: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -111,9 +111,7 @@ def analyze(celsius: np.ndarray, background: np.ndarray | None = None) -> dict:
 
 
 def render(thermal: np.ndarray, hotspots: list[dict] = (), people: list[dict] = (), width: int = 640) -> bytes:
-    lo, hi = np.percentile(thermal, (1, 99))
-    norm = np.clip((thermal.astype(np.float32) - lo) / max(hi - lo, 1), 0, 1)
-    img = Image.fromarray(PALETTE[(norm * 255).astype(np.uint8)], "RGB")
+    img = Image.fromarray(PALETTE[(flirone.normalise(thermal) * 255).astype(np.uint8)], "RGB")
     scale = width // thermal.shape[1]
     img = img.resize((thermal.shape[1] * scale, thermal.shape[0] * scale), Image.BICUBIC)
     draw = ImageDraw.Draw(img)
@@ -145,6 +143,8 @@ class CameraWorker(threading.Thread):
         self.background: np.ndarray | None = None
         self.background_time = 0.0
         self.people: list[dict] | None = None
+        self.offset = 0.0
+        self.calibrated = False
         self.fps = 0.0
         self.alive = True
 
@@ -162,12 +162,21 @@ class CameraWorker(threading.Thread):
                 if frame.ffc:
                     shutter_k = frame.status.get("shutterTemperature")
                     if shutter_k:
+                        measured = float(np.nanmedian(flirone.counts_to_celsius(frame.thermal)))
+                        target = shutter_k - 273.15 - measured
+                        if abs(target) < 25:
+                            previous = self.offset
+                            self.offset = target if not self.calibrated else 0.8 * self.offset + 0.2 * target
+                            self.calibrated = True
+                            if self.background is not None:
+                                self.background += self.offset - previous
                         self.shutter_check = {
-                            "measured_c": round(float(np.nanmedian(to_celsius(frame.thermal))), 1),
+                            "measured_c": round(measured, 1),
                             "shutter_c": round(shutter_k - 273.15, 1),
+                            "offset_c": round(self.offset, 1),
                         }
                     continue
-                celsius = to_celsius(frame.thermal)
+                celsius = to_celsius(frame.thermal, self.offset)
                 h, w = frame.thermal.shape
                 stats = {
                     "min_c": round(float(np.nanmin(celsius)), 1),
@@ -195,8 +204,12 @@ class CameraWorker(threading.Thread):
                     analysis = {**analysis, "people_source": "model", "people_count": len(people), "people": people}
                 stats["hotspots"] = len(analysis["hotspots"])
                 stats["person_like"] = analysis["person_like"]
+                analysis["presence"] = analysis["people_count"] > 0 or analysis["person_like"] > 0
+                analysis["calibration"] = "shutter" if self.calibrated else "uncalibrated"
                 stats["people"] = analysis["people_count"]
                 stats["people_source"] = analysis["people_source"]
+                stats["presence"] = analysis["presence"]
+                stats["calibration"] = analysis["calibration"]
                 jpg = render(frame.thermal, analysis["hotspots"], analysis["people"])
                 with self.cond:
                     self.frame, self.stats, self.thermal_jpg, self.analysis = frame, stats, jpg, analysis
@@ -305,15 +318,17 @@ body{margin:0;padding:16px;background:#111;color:#eee;font:15px system-ui,sans-s
 h1{font-size:18px;margin:0 0 12px}#grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 .card{background:#1c1c1c;border-radius:8px;overflow:hidden}.card img{width:100%;display:block;image-rendering:auto;background:#000}
 .views{display:grid;grid-template-columns:1fr 1fr;gap:2px}.meta{padding:10px 12px;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
+.flag{padding:2px 10px;border-radius:999px;font-weight:600;font-size:13px}.flag.person{background:#0c6;color:#031}.flag.warm{background:#fa3;color:#320}.flag:empty{display:none}
 .meta b{font-size:16px}.dim{color:#999;font-size:13px}.t{font-variant-numeric:tabular-nums}#empty{color:#999}
 </style></head><body><h1>FLIR ONE cameras <span class=dim id=count></span></h1><div id=grid></div><p id=empty hidden>No cameras connected.</p>
 <script>
 const grid=document.getElementById('grid'),cards={};
 function card(s){const d=document.createElement('div');d.className='card';
 d.innerHTML=`<div class=views><img src="/cam/${s}/thermal.mjpg" alt="thermal"><img src="/cam/${s}/visible.mjpg" alt="visible"></div>
-<div class=meta><b>${s}</b><span class="t" data-k=temps></span><span class="dim t" data-k=info></span></div>`;grid.append(d);return d}
+<div class=meta><b>${s}</b><span class=flag data-k=flag></span><span class="t" data-k=temps></span><span class="dim t" data-k=info></span></div>`;grid.append(d);return d}
 async function tick(){try{const cams=await (await fetch('/api/cameras')).json();const seen=new Set();
 for(const c of cams){seen.add(c.serial);const d=cards[c.serial]||(cards[c.serial]=card(c.serial));
+const f=d.querySelector('[data-k=flag]');f.className='flag'+(c.people>0&&c.people_source=='model'?' person':c.person_like>0?' warm':'');f.textContent=c.people>0&&c.people_source=='model'?`PERSON DETECTED (${c.people})`:c.person_like>0?'WARM BODY IN VIEW':'';
 d.querySelector('[data-k=temps]').textContent=c.min_c===undefined?'starting…':`min ${c.min_c}° · centre ${c.center_c}° · max ${c.max_c}°C`;
 d.querySelector('[data-k=info]').textContent=c.resolution?`${c.people} people (${c.people_source}) · ${c.hotspots} hot spots · ${c.resolution[0]}×${c.resolution[1]} · ${c.fps} fps`:''}
 for(const s in cards)if(!seen.has(s)){cards[s].remove();delete cards[s]}
@@ -382,9 +397,9 @@ def make_handler(manager: Manager):
                 if what == "raw.npy":
                     return self._npy(worker.frame.thermal)
                 if what == "celsius.npy":
-                    return self._npy(to_celsius(worker.frame.thermal).astype(np.float32))
+                    return self._npy(to_celsius(worker.frame.thermal, worker.offset).astype(np.float32))
                 if what == "celsius.json":
-                    rows = np.round(to_celsius(worker.frame.thermal), 1).tolist()
+                    rows = np.round(to_celsius(worker.frame.thermal, worker.offset), 1).tolist()
                     return self._send(json.dumps(rows).encode(), "application/json")
                 if what == "analysis":
                     return self._send(json.dumps(worker.analysis).encode(), "application/json")

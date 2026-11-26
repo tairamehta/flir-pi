@@ -5,6 +5,8 @@ import threading
 
 import numpy as np
 
+import flirone
+
 try:
     import cv2
 except ImportError:
@@ -29,8 +31,7 @@ class PersonDetector:
 
     def detect(self, thermal: np.ndarray) -> list[dict]:
         h, w = thermal.shape
-        lo, hi = np.percentile(thermal, (1, 99))
-        grey = (np.clip((thermal.astype(np.float32) - lo) / max(hi - lo, 1), 0, 1) * 255).astype(np.uint8)
+        grey = (flirone.normalise(thermal) * 255).astype(np.uint8)
         scale = min(SIZE / h, SIZE / w)
         resized = cv2.resize(grey, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
         canvas = np.full((SIZE, SIZE), 114, np.uint8)

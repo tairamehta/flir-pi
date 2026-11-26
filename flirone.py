@@ -43,6 +43,21 @@ def counts_to_celsius(counts, cal: Calibration = Calibration()):
         return cal.B / np.log(cal.R1 / (cal.R2 * (obj + cal.O)) + cal.F) - 273.15
 
 
+MIN_SPAN_COUNTS = 250.0
+
+
+def normalise(thermal: np.ndarray) -> np.ndarray:
+    data = thermal.astype(np.float32)
+    padded = np.pad(data, 1, mode="edge")
+    h, w = data.shape
+    smooth = sum(padded[y:y + h, x:x + w] for y in range(3) for x in range(3)) / 9.0
+    lo, hi = np.percentile(smooth, (1, 99))
+    if hi - lo < MIN_SPAN_COUNTS:
+        mid = (lo + hi) / 2
+        lo, hi = mid - MIN_SPAN_COUNTS / 2, mid + MIN_SPAN_COUNTS / 2
+    return np.clip((smooth - lo) / (hi - lo), 0, 1)
+
+
 @dataclass
 class Frame:
     serial: str
