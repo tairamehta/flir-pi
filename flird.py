@@ -324,8 +324,9 @@ h1{font-size:18px;margin:0 0 12px}#grid{display:grid;gap:14px;grid-template-colu
 <script>
 const grid=document.getElementById('grid'),cards={};
 function card(s){const d=document.createElement('div');d.className='card';
-d.innerHTML=`<div class=views><img src="/cam/${s}/thermal.mjpg" alt="thermal"><img src="/cam/${s}/visible.mjpg" alt="visible"></div>
-<div class=meta><b>${s}</b><span class=flag data-k=flag></span><span class="t" data-k=temps></span><span class="dim t" data-k=info></span></div>`;grid.append(d);return d}
+d.innerHTML=`<div class=views><img data-k=thermal alt="thermal"><img data-k=visible alt="visible"></div>
+<div class=meta><b>${s}</b><span class=flag data-k=flag></span><span class="t" data-k=temps></span><span class="dim t" data-k=info></span></div>`;grid.append(d);live(d.querySelector('[data-k=thermal]'),`/cam/${s}/thermal.jpg`,120);live(d.querySelector('[data-k=visible]'),`/cam/${s}/visible.jpg`,400);return d}
+function live(img,url,gap){const next=()=>{if(!img.isConnected)return;img.src=url+'?t='+Date.now()};img.onload=()=>setTimeout(next,gap);img.onerror=()=>setTimeout(next,1000);next()}
 async function tick(){try{const cams=await (await fetch('/api/cameras')).json();const seen=new Set();
 for(const c of cams){seen.add(c.serial);const d=cards[c.serial]||(cards[c.serial]=card(c.serial));
 const f=d.querySelector('[data-k=flag]');f.className='flag'+(c.people>0&&c.people_source=='model'?' person':c.person_like>0?' warm':'');f.textContent=c.people>0&&c.people_source=='model'?`PERSON DETECTED (${c.people})`:c.person_like>0?'WARM BODY IN VIEW':'';
